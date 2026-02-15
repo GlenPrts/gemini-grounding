@@ -150,8 +150,20 @@ def _perform_search(
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable not set.")
 
+    if not query or not query.strip():
+        raise ValueError("搜索查询不能为空")
+
+    # 防止负数导致循环不执行而返回 None
+    retry_count = max(0, retry_count)
+    # 防止超大延迟导致服务长时间挂起
+    MAX_RETRY_DELAY = 60
+    retry_delay = min(max(0, retry_delay), MAX_RETRY_DELAY)
+
     url = f"{base_url}/v1beta/models/{model}:generateContent"
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
     tools = [{"googleSearch": {}}]
     payload = {
         "contents": [{"parts": [{"text": query}]}],

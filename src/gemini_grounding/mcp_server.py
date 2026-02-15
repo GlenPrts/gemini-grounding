@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
@@ -63,8 +64,12 @@ def google_search(
                 output += f"{src['id']}. [{src['title']}]({src['url']})\n"
 
         return output
+    except ValueError as e:
+        return f"参数错误: {str(e)}"
     except Exception as e:
-        return f"Error performing search: {str(e)}"
+        # 脱敏：移除错误信息中的 URL，防止泄露 base_url
+        sanitized = re.sub(r"https?://\S+", "[REDACTED_URL]", str(e))
+        return f"搜索失败: {sanitized}"
 
 
 if __name__ == "__main__":
