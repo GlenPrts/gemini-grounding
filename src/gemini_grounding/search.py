@@ -4,6 +4,7 @@ import sys
 import json
 import time
 import random
+import logging
 import requests
 import concurrent.futures
 from functools import lru_cache
@@ -12,11 +13,42 @@ from fake_useragent import UserAgent
 from cachetools import cached, TTLCache
 from cachetools.keys import hashkey
 from threading import RLock
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-# Configure a session for connection pooling
-session = requests.Session()
-ua = UserAgent()
-session.headers.update({"User-Agent": ua.random})
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stderr)],
+)
+logger = logging.getLogger(__name__)
+
+
+def create_session():
+    session = requests.Session()
+    try:
+        ua = UserAgent()
+        user_agent = ua.random
+    except Exception:
+        user_agent = "GeminiGrounding/1.0"
+
+    session.headers.update({"User-Agent": user_agent})
+
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"],
+    )
+    adapter = HTTPAdapter(
+        pool_connections=20, pool_maxsize=20, max_retries=retry_strategy
+    )
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+session = create_session()
 
 # Cache configuration
 # Default TTL: 1 hour (3600 seconds)
@@ -54,7 +86,6 @@ def resolve_url(url):
     ):
         return url
 
-    # Check for proxy configuration
     proxy_base = os.environ.get("GEMINI_PROXY_URL")
 
     if proxy_base:
@@ -89,7 +120,10 @@ def resolve_url(url):
                     if match:
                         return match.group(1)
 
-        except Exception:
+        except requests.RequestException:
+            pass
+        except Exception as e:
+            logger.warning(f"Unexpected error resolving proxy URL {url}: {e}")
             pass
     else:
         try:
@@ -100,7 +134,10 @@ def resolve_url(url):
             )
             if response.status_code == 200:
                 return response.url
-        except Exception:
+        except requests.RequestException:
+            pass
+        except Exception as e:
+            logger.warning(f"Unexpected error resolving URL {url}: {e}")
             pass
 
     return url
@@ -118,7 +155,8 @@ def resolve_urls_concurrently(uris):
             uri = future_to_uri[future]
             try:
                 results[uri] = future.result()
-            except Exception:
+            except Exception as e:
+                logger.error(f"Error resolving URI {uri}: {e}")
                 results[uri] = uri
     return results
 
@@ -178,12 +216,28 @@ def _perform_search(
         sleep_time = random.uniform(search_delay_min, search_delay_max)
         if sleep_time > 0:
             if debug:
-                print(f"Waiting {sleep_time:.2f}s...", file=sys.stderr)
+                logger.info(f"Waiting {sleep_time:.2f}s before search...")
             time.sleep(sleep_time)
 
     for attempt in range(retry_count + 1):
         try:
-            response = session.post(url, json=payload, headers=headers)
+            response = session.post(
+                url, json=payload, headers=headers, timeout=(10, 60)
+            )
+
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+                if retry_after:
+                    wait_time = int(retry_after)
+                else:
+                    wait_time = min(
+                        retry_delay * (2**attempt) + random.uniform(0, 1), 60
+                    )
+
+                logger.warning(f"Rate limited (429). Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+                continue
+
             response.raise_for_status()
 
             # Process response
@@ -228,6 +282,7 @@ def _perform_search(
                         all_supports.append({"segment": segment, "uris": uris})
 
             except json.JSONDecodeError:
+                logger.warning("Failed to decode JSON response")
                 continue
 
             uris_to_resolve = set()
@@ -290,13 +345,12 @@ def _perform_search(
 
         except requests.RequestException as e:
             if attempt < retry_count:
+                wait_time = min(retry_delay * (2**attempt) + random.uniform(0, 1), 60)
                 if debug:
-                    print(
-                        f"\nRequest failed (attempt {attempt + 1}/{retry_count + 1}): {e}",
-                        file=sys.stderr,
+                    logger.warning(
+                        f"Request failed (attempt {attempt + 1}/{retry_count + 1}): {e}. Retrying in {wait_time:.2f}s..."
                     )
-                    print(f"Retrying in {retry_delay} seconds...", file=sys.stderr)
-                time.sleep(retry_delay)
+                time.sleep(wait_time)
             else:
                 raise e
 
