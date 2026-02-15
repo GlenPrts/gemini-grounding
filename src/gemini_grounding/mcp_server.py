@@ -6,7 +6,7 @@ from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+project_root = os.path.dirname(os.path.dirname(current_dir))
 env_path = os.path.join(project_root, ".env")
 if os.path.exists(env_path):
     load_dotenv(env_path)

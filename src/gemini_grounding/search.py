@@ -226,13 +226,8 @@ def _perform_search(
             )
 
             if response.status_code == 429:
-                retry_after = response.headers.get("Retry-After")
-                if retry_after:
-                    wait_time = int(retry_after)
-                else:
-                    wait_time = min(
-                        retry_delay * (2**attempt) + random.uniform(0, 1), 60
-                    )
+                # 忽略 Retry-After，使用指数退避策略重试
+                wait_time = min(retry_delay * (2**attempt) + random.uniform(0, 1), 60)
 
                 logger.warning(f"Rate limited (429). Retrying in {wait_time}s...")
                 time.sleep(wait_time)

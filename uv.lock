@@ -227,6 +227,7 @@ dependencies = [
     { name = "cachetools" },
     { name = "fake-useragent" },
     { name = "mcp" },
+    { name = "python-dotenv" },
     { name = "requests" },
 ]
 
@@ -240,6 +241,7 @@ requires-dist = [
     { name = "cachetools", specifier = ">=7.0.1" },
     { name = "fake-useragent", specifier = ">=2.2.0" },
     { name = "mcp", specifier = ">=1.0.0" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "requests", specifier = ">=2.32.5" },
 ]
 
