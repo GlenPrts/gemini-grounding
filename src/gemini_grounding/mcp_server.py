@@ -29,7 +29,20 @@ def google_search(
     search_delay_max: float = 0.0,
 ) -> str:
     """
-    Perform a Google search using Gemini Grounding.
+    利用 Google 搜索 (Gemini Grounding) 获取带有来源引用的实时事实信息。
+
+    适用于：
+    - 时事新闻：新闻、发布日期、体育比分、近期动态。
+    - 事实核查：验证特定声明、统计数据或历史细节。
+    - 外部知识：可能超出你训练截止日期或专有文档的信息。
+
+    Args:
+        query: 搜索关键词。建议将对话式问题转换为关键词查询以获得更好结果 (例如: "Python 最新版本 发布日期" 而非 "Python的最新版本是多少")。
+        model: 指定 Gemini 模型 (默认: gemini-2.5-flash)。
+        retry_count: 失败重试次数 (默认: 3)。
+        retry_delay: 重试等待时间(秒) (默认: 5.0)。
+        search_delay_min: 搜索前最小随机延迟(秒) (默认: 0.0)。
+        search_delay_max: 搜索前最大随机延迟(秒) (默认: 0.0)。
     """
     try:
         result = search(
