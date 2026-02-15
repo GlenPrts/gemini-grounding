@@ -9,11 +9,37 @@ import concurrent.futures
 from functools import lru_cache
 from urllib.parse import urlparse
 from fake_useragent import UserAgent
+from cachetools import cached, TTLCache
+from cachetools.keys import hashkey
+from threading import RLock
 
 # Configure a session for connection pooling
 session = requests.Session()
 ua = UserAgent()
 session.headers.update({"User-Agent": ua.random})
+
+# Cache configuration
+# Default TTL: 1 hour (3600 seconds)
+try:
+    SEARCH_CACHE_TTL = int(os.environ.get("GEMINI_CACHE_TTL", "3600"))
+except ValueError:
+    print(
+        "Warning: Invalid GEMINI_CACHE_TTL value, defaulting to 3600 seconds.",
+        file=sys.stderr,
+    )
+    SEARCH_CACHE_TTL = 3600
+
+try:
+    SEARCH_CACHE_MAXSIZE = int(os.environ.get("GEMINI_CACHE_MAXSIZE", "100"))
+except ValueError:
+    print(
+        "Warning: Invalid GEMINI_CACHE_MAXSIZE value, defaulting to 100.",
+        file=sys.stderr,
+    )
+    SEARCH_CACHE_MAXSIZE = 100
+
+search_cache = TTLCache(maxsize=SEARCH_CACHE_MAXSIZE, ttl=SEARCH_CACHE_TTL)
+search_cache_lock = RLock()
 
 
 @lru_cache(maxsize=1000)
@@ -97,34 +123,30 @@ def resolve_urls_concurrently(uris):
     return results
 
 
-def search(
-    query,
-    model=None,
-    api_key=None,
-    base_url=None,
-    retry_count=None,
-    retry_delay=None,
-    search_delay_min=None,
-    search_delay_max=None,
-    debug=False,
-):
-    if model is None:
-        model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-    if api_key is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
-    if base_url is None:
-        base_url = os.environ.get(
-            "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"
-        )
-    if retry_count is None:
-        retry_count = int(os.environ.get("GEMINI_RETRY_COUNT", "3"))
-    if retry_delay is None:
-        retry_delay = float(os.environ.get("GEMINI_RETRY_DELAY", "5"))
-    if search_delay_min is None:
-        search_delay_min = float(os.environ.get("GEMINI_SEARCH_DELAY_MIN", "0.0"))
-    if search_delay_max is None:
-        search_delay_max = float(os.environ.get("GEMINI_SEARCH_DELAY_MAX", "0.0"))
+def _search_cache_key(query, model, api_key, base_url, *args, **kwargs):
+    """
+    Generate a cache key for the search function.
+    We exclude retry configurations and debug flags from the cache key.
+    """
+    return hashkey(query, model, base_url)
 
+
+@cached(cache=search_cache, key=_search_cache_key, lock=search_cache_lock)
+def _perform_search(
+    query,
+    model,
+    api_key,
+    base_url,
+    retry_count,
+    retry_delay,
+    search_delay_min,
+    search_delay_max,
+    debug,
+):
+    """
+    Internal function to perform the actual search request.
+    This function is cached.
+    """
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable not set.")
 
@@ -225,7 +247,8 @@ def search(
                         next_id += 1
                     original_url_to_id[uri] = url_to_id[resolved]
 
-            full_text_bytes = full_text.encode("utf-8")
+            # Sort supports by endIndex in descending order to insert citations from end to start
+            # This prevents index shifting issues
             all_supports.sort(
                 key=lambda x: x["segment"].get("endIndex", 0), reverse=True
             )
@@ -233,23 +256,24 @@ def search(
             for support in all_supports:
                 end_idx = support["segment"].get("endIndex")
                 uris = support["uris"]
+
+                # Verify end_idx is valid
                 if end_idx is not None:
                     ids = []
                     for u in uris:
                         if u in original_url_to_id:
                             ids.append(original_url_to_id[u])
                     ids = sorted(list(set(ids)))
+
                     if ids:
                         citation = f" [{', '.join(map(str, ids))}]"
-                        citation_bytes = citation.encode("utf-8")
-                        if end_idx <= len(full_text_bytes):
-                            full_text_bytes = (
-                                full_text_bytes[:end_idx]
-                                + citation_bytes
-                                + full_text_bytes[end_idx:]
+                        # Insert citation into the string at the character index
+                        # Since we iterate in reverse order, previous insertions don't affect current index
+                        if end_idx <= len(full_text):
+                            full_text = (
+                                full_text[:end_idx] + citation + full_text[end_idx:]
                             )
 
-            full_text = full_text_bytes.decode("utf-8")
             return {"text": full_text, "sources": final_sources}
 
         except requests.RequestException as e:
@@ -263,6 +287,47 @@ def search(
                 time.sleep(retry_delay)
             else:
                 raise e
+
+
+def search(
+    query,
+    model=None,
+    api_key=None,
+    base_url=None,
+    retry_count=None,
+    retry_delay=None,
+    search_delay_min=None,
+    search_delay_max=None,
+    debug=False,
+):
+    if model is None:
+        model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    if api_key is None:
+        api_key = os.environ.get("GEMINI_API_KEY")
+    if base_url is None:
+        base_url = os.environ.get(
+            "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"
+        )
+    if retry_count is None:
+        retry_count = int(os.environ.get("GEMINI_RETRY_COUNT", "3"))
+    if retry_delay is None:
+        retry_delay = float(os.environ.get("GEMINI_RETRY_DELAY", "5"))
+    if search_delay_min is None:
+        search_delay_min = float(os.environ.get("GEMINI_SEARCH_DELAY_MIN", "0.0"))
+    if search_delay_max is None:
+        search_delay_max = float(os.environ.get("GEMINI_SEARCH_DELAY_MAX", "0.0"))
+
+    return _perform_search(
+        query=query,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        retry_count=retry_count,
+        retry_delay=retry_delay,
+        search_delay_min=search_delay_min,
+        search_delay_max=search_delay_max,
+        debug=debug,
+    )
 
 
 def main():

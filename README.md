@@ -104,6 +104,8 @@ uv run src/gemini_grounding/mcp_server.py
 | `GEMINI_RETRY_DELAY` | 重试等待时间 (秒) | `5` | `10` |
 | `GEMINI_SEARCH_DELAY_MIN` | 搜索前最小随机延迟 (秒) | `0.0` | `1.0` |
 | `GEMINI_SEARCH_DELAY_MAX` | 搜索前最大随机延迟 (秒) | `0.0` | `3.0` |
+| `GEMINI_CACHE_TTL` | 搜索结果缓存过期时间 (秒) | `3600` | `600` |
+| `GEMINI_CACHE_MAXSIZE` | 搜索结果缓存最大条目数 | `100` | `500` |
 | `GEMINI_PROXY_URL` | 解析 Grounding 链接的代理服务 URL | - | `https://rp.0x01111110.com` |
 
 ### 关于重试与延迟
