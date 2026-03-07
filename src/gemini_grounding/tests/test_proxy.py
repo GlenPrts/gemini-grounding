@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import os
 import sys
+import requests
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -12,7 +13,7 @@ class TestProxy(unittest.TestCase):
     def setUp(self):
         resolve_url.cache_clear()
 
-    @patch("search.session")
+    @patch("search.resolve_session")
     @patch.dict(os.environ, {"GEMINI_PROXY_URL": "https://my-proxy.com"}, clear=True)
     def test_proxy_configured(self, mock_session):
         mock_response = MagicMock()
@@ -25,12 +26,12 @@ class TestProxy(unittest.TestCase):
         mock_session.head.assert_called_with(
             "https://my-proxy.com/https://vertexaisearch.cloud.google.com/grounding-api-redirect/foo",
             allow_redirects=False,
-            timeout=5,
+            timeout=8.0,
             headers={"X-Proxy-Manual-Redirect": "true"},
         )
         self.assertEqual(result, "https://final-destination.com")
 
-    @patch("search.session")
+    @patch("search.resolve_session")
     @patch.dict(os.environ, {}, clear=True)
     def test_proxy_not_configured(self, mock_session):
         mock_response = MagicMock()
@@ -41,8 +42,26 @@ class TestProxy(unittest.TestCase):
         url = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/bar"
         result = resolve_url(url)
 
-        mock_session.head.assert_called_with(url, allow_redirects=True, timeout=5)
+        mock_session.head.assert_called_with(url, allow_redirects=True, timeout=8.0)
         self.assertEqual(result, "https://direct-resolved.com")
+
+    @patch("search.URL_RESOLVE_RETRY_COUNT", 0)
+    @patch("search.resolve_session")
+    @patch.dict(os.environ, {"GEMINI_PROXY_URL": "https://my-proxy.com"}, clear=True)
+    def test_proxy_timeout_returns_original_url(self, mock_session):
+        mock_session.head.side_effect = requests.ReadTimeout("proxy timeout")
+
+        url = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/baz"
+        result = resolve_url(url)
+
+        self.assertEqual(result, url)
+        self.assertEqual(mock_session.head.call_count, 1)
+        first_call = mock_session.head.call_args_list[0]
+        self.assertEqual(
+            first_call.args[0],
+            "https://my-proxy.com/https://vertexaisearch.cloud.google.com/grounding-api-redirect/baz",
+        )
+        self.assertEqual(first_call.kwargs["allow_redirects"], False)
 
 
 if __name__ == "__main__":

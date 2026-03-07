@@ -8,7 +8,7 @@
 
 - **MCP 协议支持**：作为标准 MCP 服务器运行，可集成到 Claude Desktop 等客户端。
 - **Google Grounding**：利用 Google 搜索索引提供实时、准确的信息，并附带来源链接。
-- **抗限流机制**：内置重试逻辑 (Retry) 和随机延迟 (Jitter)，提高在 API 不稳定或限流情况下的成功率。
+- **抗限流机制**：内置重试逻辑 (Retry) 和随机延迟 (Jitter)，推荐默认启用 `GEMINI_RETRY_UNTIL_SUCCESS=true`，提高在 API 不稳定或限流情况下的成功率。
 - **多模式运行**：既可以作为 MCP 服务运行，也可以作为 CLI 工具或 AI Skill 使用。
 - **灵活配置**：支持自定义模型、API 端点（兼容 NewAPI）、重试次数和延迟时间。
 
@@ -49,6 +49,7 @@
         "GEMINI_MODEL": "gemini-2.5-flash",
         "GEMINI_RETRY_COUNT": "3",
         "GEMINI_RETRY_DELAY": "5",
+        "GEMINI_RETRY_UNTIL_SUCCESS": "true",
         "GEMINI_PROXY_URL": "https://rp.0x01111110.com" 
       }
     }
@@ -59,6 +60,7 @@
 > **注意**: 
 > 1. 请将 `/absolute/path/to/...` 替换为实际的绝对路径。
 > 2. `GEMINI_PROXY_URL` 为可选配置，若不设置则直接解析重定向链接。
+> 3. 推荐在 MCP 客户端配置中显式设置 `GEMINI_RETRY_UNTIL_SUCCESS=true`，避免临时网络波动或空结果导致搜索失败。
 
 ## 🚀 使用方法 2：AI Skill 集成 (CLI)
 
@@ -66,7 +68,7 @@
 
 **命令模板**:
 ```bash
-export GEMINI_API_KEY="your-key" && uv run src/gemini_grounding/search.py --query "您的搜索关键词"
+export GEMINI_API_KEY="your-key" && export GEMINI_RETRY_UNTIL_SUCCESS=true && uv run src/gemini_grounding/search.py --query "您的搜索关键词"
 ```
 
 **Skill 定义参考**:
@@ -75,7 +77,7 @@ export GEMINI_API_KEY="your-key" && uv run src/gemini_grounding/search.py --quer
 **示例调用**:
 ```bash
 # 搜索 Python 最新版本
-uv run src/gemini_grounding/search.py --query "Python 最新版本发布时间"
+GEMINI_RETRY_UNTIL_SUCCESS=true uv run src/gemini_grounding/search.py --query "Python 最新版本发布时间"
 ```
 
 ## 🚀 使用方法 3：通用 MCP 客户端
@@ -88,8 +90,19 @@ uv run src/gemini_grounding/mcp_server.py
 ```
 
 **环境变量**:
-确保运行环境已设置以下变量（或通��客户端配置传递）：
+确保运行环境已设置以下变量（或通过客户端配置传递）：
 - `GEMINI_API_KEY`
+- `GEMINI_RETRY_UNTIL_SUCCESS=true`（推荐默认开启）
+
+### 推荐默认配置
+
+建议在 `.env` 或 MCP 客户端 `env` 中显式加入以下配置：
+
+```env
+GEMINI_RETRY_UNTIL_SUCCESS=true
+```
+
+这样在出现限流、短暂网络抖动或偶发空结果时，工具会继续重试直到拿到非空结果；如果你更希望快速失败，再手动关闭。
 
 ## ⚙️ 配置说明
 
@@ -102,6 +115,7 @@ uv run src/gemini_grounding/mcp_server.py
 | `GEMINI_BASE_URL` | API 基础 URL (支持 NewAPI) | Google 官方 API | `https://api.newapi.com/v1/gemini` |
 | `GEMINI_RETRY_COUNT` | 失败重试次数 | `3` | `5` |
 | `GEMINI_RETRY_DELAY` | 重试等待时间 (秒) | `5` | `10` |
+| `GEMINI_RETRY_UNTIL_SUCCESS` | 持续重试直到拿到非空结果，推荐显式设为 `true` | `false`（推荐设为 `true`） | `true` |
 | `GEMINI_SEARCH_DELAY_MIN` | 搜索前最小随机延迟 (秒) | `0.0` | `1.0` |
 | `GEMINI_SEARCH_DELAY_MAX` | 搜索前最大随机延迟 (秒) | `0.0` | `3.0` |
 | `GEMINI_CACHE_TTL` | 搜索结果缓存过期时间 (秒) | `3600` | `600` |
@@ -110,8 +124,9 @@ uv run src/gemini_grounding/mcp_server.py
 
 ### 关于重试与延迟
 
-为了应对 API 限流（Rate Limiting），您可以配置：
+为了应对 API 限流（Rate Limiting），推荐默认采用以下配置：
 - **Retry**: 请求失败时自动重试。
+- **Retry Until Success**: 设置 `GEMINI_RETRY_UNTIL_SUCCESS=true` 后，会在请求失败、限流或返回空结果时持续重试，直到拿到非空结果。
 - **Jitter (Delay)**: 在发起请求前增加随机等待时间，避免并发请求瞬间打满 QPS 限制。
 
 ## 🛠️ 开发与测试

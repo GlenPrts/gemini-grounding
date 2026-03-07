@@ -1,6 +1,6 @@
 ---
 name: google-search
-description: 利用 Google 搜索 (Gemini Grounding) 获取带有来源引用的实时事实信息。适用于查询时事新闻、验证事实、获取最新技术文档或任何训练数据之外的知识。AI 应在需要外部信息时主动使用此工具。
+description: 利用 Google 搜索 (Gemini Grounding) 获取带有来源引用的实时事实信息。适用于查询时事新闻、验证事实、获取最新技术文档或任何训练数据之外的知识。AI 应在需要外部信息时主动使用此工具，并默认按 `GEMINI_RETRY_UNTIL_SUCCESS=true` 的策略执行。
 ---
 
 # Google Search (Gemini Grounding) - 联网搜索
@@ -8,6 +8,8 @@ description: 利用 Google 搜索 (Gemini Grounding) 获取带有来源引用的
 ## 概述
 
 此工具利用 Gemini 的 Grounding 功能执行 Google 搜索，返回事实准确、即时的答案，并附带行内引用。它利用 Google 的搜索索引提供关于时事、技术文档和一般知识的准确信息。
+
+默认建议：在 MCP / Skill 集成场景下，默认使用 `GEMINI_RETRY_UNTIL_SUCCESS=true`，以降低限流、瞬时网络错误或偶发空结果对搜索成功率的影响。
 
 ## AI 调用指南
 
@@ -17,6 +19,12 @@ description: 利用 Google 搜索 (Gemini Grounding) 获取带有来源引用的
 - **事实核查**：验证特定声明、统计数据或历史细节。
 - **外部知识**：可能超出你训练截止日期或专有文档的信息。
 - **明确请求**：当用户使用“搜索”、“查找”、“查询”、“最新信息”等触发词时。
+
+### 默认执行策略
+
+- **默认开启持续重试**：除非用户明确要求快速失败、限制等待时间，或任务本身不适合长时间等待，否则默认按 `GEMINI_RETRY_UNTIL_SUCCESS=true` 执行。
+- **优先保证拿到结果**：面对限流、网络抖动、偶发空结果时，优先选择等待并重试，而不是直接向用户返回失败。
+- **必要时说明等待原因**：如果发生明显重试，可简短告知用户正在等待联网搜索返回结果。
 
 ### 触发词
 
@@ -30,7 +38,7 @@ description: 利用 Google 搜索 (Gemini Grounding) 获取带有来源引用的
 使用 `uv` 执行 Python 脚本，并提供优化后的查询语句。注意：**必须**先加载环境变量。
 
 ```bash
-export $(grep -v '^#' .env | xargs) && uv run src/gemini_grounding/search.py --query "在此处填入优化后的查询语句"
+export $(grep -v '^#' .env | xargs) && export GEMINI_RETRY_UNTIL_SUCCESS=true && uv run src/gemini_grounding/search.py --query "在此处填入优化后的查询语句"
 ```
 
 ### 参数说明
@@ -42,6 +50,7 @@ export $(grep -v '^#' .env | xargs) && uv run src/gemini_grounding/search.py --q
 - `--model`: (选填) 指定 Gemini 模型 (默认: `gemini-2.5-flash`)。
 - `--retry-count`: (选填) 失败重试次数 (默认: 3)。
 - `--retry-delay`: (选填) 重试等待时间 (秒) (默认: 5.0)。
+- `--retry-until-success`: (选填) 持续重试直到返回非空结果。对于 MCP / Skill 集成，建议默认开启。
 
 ## 输出处理
 
@@ -59,12 +68,12 @@ export $(grep -v '^#' .env | xargs) && uv run src/gemini_grounding/search.py --q
 **用户**: "OpenAI Sora 什么时候发布的？"
 **命令**:
 ```bash
-export $(grep -v '^#' .env | xargs) && uv run src/gemini_grounding/search.py --query "OpenAI Sora 发布日期"
+export $(grep -v '^#' .env | xargs) && export GEMINI_RETRY_UNTIL_SUCCESS=true && uv run src/gemini_grounding/search.py --query "OpenAI Sora 发布日期"
 ```
 
 ### 示例 2：一般知识
 **用户**: "2024 年奥斯卡最佳影片是谁？"
 **命令**:
 ```bash
-export $(grep -v '^#' .env | xargs) && uv run src/gemini_grounding/search.py --query "2024 奥斯卡 最佳影片 得主"
+export $(grep -v '^#' .env | xargs) && export GEMINI_RETRY_UNTIL_SUCCESS=true && uv run src/gemini_grounding/search.py --query "2024 奥斯卡 最佳影片 得主"
 ```
