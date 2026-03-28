@@ -1,35 +1,16 @@
+import asyncio
 import os
-import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch, AsyncMock
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Mock mcp.server.fastmcp before importing server
-fast_mcp_mock = MagicMock()
-sys.modules["mcp.server.fastmcp"] = fast_mcp_mock
-
-
-class DummyFastMCP:
-    def __init__(self, name):
-        self.name = name
-
-    def tool(self, *args, **kwargs):
-        def decorator(func):
-            return func
-
-        return decorator
-
-
-fast_mcp_mock.FastMCP.side_effect = DummyFastMCP
-
-from mcp_server import google_search
+from gemini_grounding.mcp_server import google_search
 
 
 class TestMCP(unittest.TestCase):
     @patch.dict(os.environ, {}, clear=True)
-    @patch("mcp_server.search")
-    def test_google_search_uses_defaults(self, mock_search):
+    @patch("gemini_grounding.mcp_server.search")
+    @patch("gemini_grounding.mcp_server.ensure_initialized")
+    def test_google_search_uses_defaults(self, mock_init, mock_search):
         mock_search.return_value = {
             "text": "This is a test result [1].",
             "sources": [
@@ -37,8 +18,9 @@ class TestMCP(unittest.TestCase):
             ],
         }
 
-        result = google_search("test query")
+        result = asyncio.run(google_search("test query"))
 
+        mock_init.assert_called_once()
         mock_search.assert_called_with(
             "test query",
             model="gemini-2.5-flash",
@@ -64,11 +46,12 @@ class TestMCP(unittest.TestCase):
         },
         clear=False,
     )
-    @patch("mcp_server.search")
-    def test_google_search_reads_env_defaults(self, mock_search):
+    @patch("gemini_grounding.mcp_server.search")
+    @patch("gemini_grounding.mcp_server.ensure_initialized")
+    def test_google_search_reads_env_defaults(self, mock_init, mock_search):
         mock_search.return_value = {"text": "Result", "sources": []}
 
-        google_search("query")
+        asyncio.run(google_search("query"))
 
         mock_search.assert_called_with(
             "query",
@@ -92,18 +75,21 @@ class TestMCP(unittest.TestCase):
         },
         clear=False,
     )
-    @patch("mcp_server.search")
-    def test_google_search_explicit_params_override_env(self, mock_search):
+    @patch("gemini_grounding.mcp_server.search")
+    @patch("gemini_grounding.mcp_server.ensure_initialized")
+    def test_google_search_explicit_params_override_env(self, mock_init, mock_search):
         mock_search.return_value = {"text": "Result", "sources": []}
 
-        google_search(
-            "query",
-            model="custom-model",
-            retry_count=5,
-            retry_delay=2.0,
-            search_delay_min=1.0,
-            search_delay_max=2.0,
-            retry_until_success=True,
+        asyncio.run(
+            google_search(
+                "query",
+                model="custom-model",
+                retry_count=5,
+                retry_delay=2.0,
+                search_delay_min=1.0,
+                search_delay_max=2.0,
+                retry_until_success=True,
+            )
         )
 
         mock_search.assert_called_with(
@@ -115,6 +101,29 @@ class TestMCP(unittest.TestCase):
             search_delay_max=2.0,
             retry_until_success=True,
         )
+
+    @patch("gemini_grounding.mcp_server.ensure_initialized")
+    def test_google_search_empty_query_raises_tool_error(self, mock_init):
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        with self.assertRaises(ToolError):
+            asyncio.run(google_search(""))
+
+    @patch("gemini_grounding.mcp_server.ensure_initialized")
+    def test_google_search_too_long_query_raises_tool_error(self, mock_init):
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        with self.assertRaises(ToolError):
+            asyncio.run(google_search("x" * 2001))
+
+    @patch("gemini_grounding.mcp_server.ensure_initialized")
+    def test_google_search_invalid_delay_raises_tool_error(self, mock_init):
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        with self.assertRaises(ToolError):
+            asyncio.run(
+                google_search("query", search_delay_min=5.0, search_delay_max=1.0)
+            )
 
 
 if __name__ == "__main__":

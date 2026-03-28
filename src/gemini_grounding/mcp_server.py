@@ -1,28 +1,22 @@
-import os
+import asyncio
 import re
-import sys
-import requests
-from mcp.server.fastmcp import FastMCP
-from dotenv import load_dotenv
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(current_dir))
-env_path = os.path.join(project_root, ".env")
-if os.path.exists(env_path):
-    load_dotenv(env_path)
-
-sys.path.append(current_dir)
+from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.fastmcp.exceptions import ToolError
 
 try:
-    from search import resolve_search_options, search
+    from .search import resolve_search_options, search, ensure_initialized
 except ImportError:
-    from .search import resolve_search_options, search
+    from search import resolve_search_options, search, ensure_initialized
+
+_MAX_QUERY_LENGTH = 2000
 
 mcp = FastMCP("gemini-grounding")
+mcp._mcp_server.version = "0.1.0"
 
 
 @mcp.tool()
-def google_search(
+async def google_search(
     query: str,
     model: str | None = None,
     retry_count: int | None = None,
@@ -30,6 +24,7 @@ def google_search(
     search_delay_min: float | None = None,
     search_delay_max: float | None = None,
     retry_until_success: bool | None = None,
+    ctx: Context | None = None,
 ) -> str:
     """
     利用 Google 搜索 (Gemini Grounding) 获取带有来源引用的实时事实信息。
@@ -41,9 +36,6 @@ def google_search(
 
     为了获得最佳搜索结果，请务必拆分并优化搜索语句。建议针对单一特定的信息点进行搜索，宁可进行多次精准搜索，也不要尝试一次性搜索过多复杂内容。
 
-    在 MCP 集成场景中，建议默认将 `GEMINI_RETRY_UNTIL_SUCCESS=true` 传入运行环境，
-    以便在遇到限流、瞬时网络错误或偶发空结果时持续重试直到拿到非空结果。
-
     Args:
         query: 搜索关键词。建议将对话式问题转换为关键词查询以获得更好结果 (例如: "Python 最新版本 发布日期" 而非 "Python的最新版本是多少")。
         model: 指定 Gemini 模型 (默认: 读取 GEMINI_MODEL，否则 gemini-2.5-flash)。
@@ -53,7 +45,24 @@ def google_search(
         search_delay_max: 搜索前最大随机延迟(秒) (默认: 读取 GEMINI_SEARCH_DELAY_MAX，否则 0.0)。
         retry_until_success: 是否持续重试直到拿到非空结果 (默认: 读取 GEMINI_RETRY_UNTIL_SUCCESS，否则 False；MCP / Skill 场景建议设为 True)。
     """
+    if not query or not query.strip():
+        raise ToolError("搜索查询不能为空")
+
+    if len(query) > _MAX_QUERY_LENGTH:
+        raise ToolError(f"查询长度 ({len(query)}) 超过最大限制 ({_MAX_QUERY_LENGTH})")
+
+    if (
+        search_delay_min is not None
+        and search_delay_max is not None
+        and search_delay_min > search_delay_max
+    ):
+        raise ToolError(
+            f"search_delay_min ({search_delay_min}) 不能大于 search_delay_max ({search_delay_max})"
+        )
+
     try:
+        ensure_initialized()
+
         options = resolve_search_options(
             model=model,
             retry_count=retry_count,
@@ -63,7 +72,15 @@ def google_search(
             retry_until_success=retry_until_success,
         )
 
-        result = search(
+        if ctx:
+            await ctx.info(
+                f"Searching: {query!r} (model={options['model']}, "
+                f"retry_until_success={options['retry_until_success']})"
+            )
+
+        # Run blocking search in a thread to avoid blocking the MCP event loop
+        result = await asyncio.to_thread(
+            search,
             query,
             model=options["model"],
             retry_count=options["retry_count"],
@@ -80,16 +97,15 @@ def google_search(
                 output += f"{src['id']}. [{src['title']}]({src['url']})\n"
 
         return output
+
+    except ToolError:
+        raise
     except ValueError as e:
-        return f"参数错误: {str(e)}"
-    except requests.RequestException as e:
-        # 脱敏：移除错误信息中的 URL，防止泄露 base_url
-        sanitized = re.sub(r"https?://\S+", "[REDACTED_URL]", str(e))
-        return f"网络请求失败: {sanitized}"
+        raise ToolError(f"参数错误: {e}") from e
     except Exception as e:
-        # 脱敏：移除错误信息中的 URL，防止泄露 base_url
+        # Sanitize: remove URLs to prevent leaking base_url / api_key
         sanitized = re.sub(r"https?://\S+", "[REDACTED_URL]", str(e))
-        return f"搜索失败: {sanitized}"
+        raise ToolError(f"搜索失败: {sanitized}") from e
 
 
 if __name__ == "__main__":

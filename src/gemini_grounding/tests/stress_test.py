@@ -183,12 +183,7 @@ async def call_tool(session, query, tool_args=None):
                 text += content.text
 
         has_sources = "## Sources" in text
-        ERROR_PREFIXES = (
-            "Error performing search:",
-            "搜索失败:",
-            "参数错误:",
-        )
-        is_error = any(text.startswith(p) for p in ERROR_PREFIXES)
+        is_error = getattr(result, "isError", False)
 
         return CallResult(
             query=query[:50],

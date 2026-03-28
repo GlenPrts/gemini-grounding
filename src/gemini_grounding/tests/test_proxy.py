@@ -1,19 +1,17 @@
 import unittest
 from unittest.mock import MagicMock, patch
 import os
-import sys
 import requests
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from search import resolve_url
+from gemini_grounding.search import resolve_url, ensure_initialized, _state
 
 
 class TestProxy(unittest.TestCase):
     def setUp(self):
+        ensure_initialized()
         resolve_url.cache_clear()
 
-    @patch("search.resolve_session")
+    @patch.object(_state, "resolve_session", create=True)
     @patch.dict(os.environ, {"GEMINI_PROXY_URL": "https://my-proxy.com"}, clear=True)
     def test_proxy_configured(self, mock_session):
         mock_response = MagicMock()
@@ -26,12 +24,12 @@ class TestProxy(unittest.TestCase):
         mock_session.head.assert_called_with(
             "https://my-proxy.com/https://vertexaisearch.cloud.google.com/grounding-api-redirect/foo",
             allow_redirects=False,
-            timeout=8.0,
+            timeout=_state.resolve_timeout,
             headers={"X-Proxy-Manual-Redirect": "true"},
         )
         self.assertEqual(result, "https://final-destination.com")
 
-    @patch("search.resolve_session")
+    @patch.object(_state, "resolve_session", create=True)
     @patch.dict(os.environ, {}, clear=True)
     def test_proxy_not_configured(self, mock_session):
         mock_response = MagicMock()
@@ -42,11 +40,13 @@ class TestProxy(unittest.TestCase):
         url = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/bar"
         result = resolve_url(url)
 
-        mock_session.head.assert_called_with(url, allow_redirects=True, timeout=8.0)
+        mock_session.head.assert_called_with(
+            url, allow_redirects=True, timeout=_state.resolve_timeout
+        )
         self.assertEqual(result, "https://direct-resolved.com")
 
-    @patch("search.URL_RESOLVE_RETRY_COUNT", 0)
-    @patch("search.resolve_session")
+    @patch.object(_state, "resolve_retry_count", 0)
+    @patch.object(_state, "resolve_session", create=True)
     @patch.dict(os.environ, {"GEMINI_PROXY_URL": "https://my-proxy.com"}, clear=True)
     def test_proxy_timeout_returns_original_url(self, mock_session):
         mock_session.head.side_effect = requests.ReadTimeout("proxy timeout")

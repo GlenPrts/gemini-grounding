@@ -1,21 +1,16 @@
-import sys
 import os
 import unittest
 import requests
 from unittest.mock import MagicMock, patch
 
-# Add src to path if running directly
-sys.path.append(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
-
-from gemini_grounding.search import search, search_cache
+from gemini_grounding.search import search, ensure_initialized, _state
 
 
 class TestSearchCache(unittest.TestCase):
     def setUp(self):
+        ensure_initialized()
         # Clear cache before each test
-        search_cache.clear()
+        _state.search_cache.clear()
         self.env_patcher = patch.dict(
             os.environ, {"GEMINI_RETRY_UNTIL_SUCCESS": "false"}, clear=False
         )
@@ -37,7 +32,7 @@ class TestSearchCache(unittest.TestCase):
     def tearDown(self):
         self.env_patcher.stop()
 
-    @patch("gemini_grounding.search.session")
+    @patch.object(_state, "session", create=True)
     def test_caching_behavior(self, mock_session):
         # Setup mock response
         mock_response = MagicMock()
@@ -62,7 +57,7 @@ class TestSearchCache(unittest.TestCase):
         result3 = search("different query", api_key="test_key")
         self.assertEqual(mock_session.post.call_count, 1)
 
-    @patch("gemini_grounding.search.session")
+    @patch.object(_state, "session", create=True)
     def test_cache_key_excludes_retry(self, mock_session):
         # Setup mock response
         mock_response = MagicMock()
@@ -82,7 +77,7 @@ class TestSearchCache(unittest.TestCase):
 
     @patch("gemini_grounding.search.time.sleep")
     @patch("gemini_grounding.search.random.uniform", return_value=0)
-    @patch("gemini_grounding.search.session")
+    @patch.object(_state, "session", create=True)
     def test_retry_until_success_retries_until_response(
         self, mock_session, mock_uniform, mock_sleep
     ):
@@ -108,7 +103,7 @@ class TestSearchCache(unittest.TestCase):
 
     @patch("gemini_grounding.search.time.sleep")
     @patch("gemini_grounding.search.random.uniform", return_value=0)
-    @patch("gemini_grounding.search.session")
+    @patch.object(_state, "session", create=True)
     def test_cache_key_includes_retry_until_success(
         self, mock_session, mock_uniform, mock_sleep
     ):
